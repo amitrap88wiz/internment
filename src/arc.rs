@@ -131,6 +131,13 @@ impl<T: ?Sized + BorrowStr> Borrow<str> for BoxRefCount<T> {
     }
 }
 
+impl<T: ?Sized + BorrowOsStr> Borrow<OsStr> for BoxRefCount<T> {
+    #[inline(always)]
+    fn borrow(&self) -> &OsStr {
+        &self.0.data.borrow()
+    }
+}
+
 impl<T: ?Sized> Deref for BoxRefCount<T> {
     type Target = T;
     #[inline(always)]
@@ -299,6 +306,60 @@ impl<T: ?Sized + Eq + Hash + Send + Sync + 'static> ArcIntern<T> {
     fn new_from_str<'a>(val: &'a str) -> ArcIntern<T>
     where
         T: BorrowStr + From<&'a str>,
+    {
+        let m = Self::get_container();
+        if let Some(b) = m.get(val) {
+            let b = b.key();
+            // First increment the count.  We are holding the write mutex here.
+            // Has to be the write mutex to avoid a race
+            let oldval = b.0.count.fetch_add(1, Ordering::SeqCst);
+            if oldval != 0 {
+                // we can only use this value if the value is not about to be freed
+                return ArcIntern {
+                    pointer: std::ptr::NonNull::from(b.0.borrow()),
+                };
+            } else {
+                // we have encountered a race condition here.
+                // we will just wait for the object to finish
+                // being freed.
+                b.0.count.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        // start over with the new value
+        Self::new(val.into())
+    }
+}
+
+/// internal trait that allows us to specialize the `Borrow` trait for `str`
+/// avoid the need to create an owned value first.
+pub trait BorrowOsStr: Borrow<OsStr> {}
+
+impl BorrowOsStr for std::ffi::OsString {}
+
+/// BorrowStr specialization
+impl<T: ?Sized + Eq + Hash + Send + Sync + 'static> ArcIntern<T> {
+    /// Intern a value from a reference with atomic reference counting.
+    ///
+    /// this is a fast-path for str, as it avoids the need to create owned
+    /// value first.
+    pub fn from_os_str<Q: AsRef<OsStr>>(val: Q) -> ArcIntern<T>
+    where
+        T: BorrowOsStr + for<'a> From<&'a OsStr>,
+    {
+        // No reference only fast-path as
+        // the trait `std::borrow::Borrow<Q>` is not implemented for `Arc<T>`
+        Self::new_from_os_str(val.as_ref())
+    }
+
+    /// Intern a value from a reference with atomic reference counting.
+    ///
+    /// If this value has not previously been
+    /// interned, then `new` will allocate a spot for the value on the
+    /// heap and generate that value using `T::from(val)`.
+    fn new_from_os_str<'a>(val: &'a OsStr) -> ArcIntern<T>
+    where
+        T: BorrowOsStr + From<&'a OsStr>,
     {
         let m = Self::get_container();
         if let Some(b) = m.get(val) {
