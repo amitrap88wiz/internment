@@ -308,7 +308,7 @@ impl<T: ?Sized + Eq + Hash + Send + Sync + 'static> ArcIntern<T> {
         T: BorrowStr + From<&'a str>,
     {
         let m = Self::get_container();
-        if let Some(b) = m.get(val) {
+        if let Some(b) = m.get_mut(val) {
             let b = b.key();
             // First increment the count.  We are holding the write mutex here.
             // Has to be the write mutex to avoid a race
@@ -362,7 +362,7 @@ impl<T: ?Sized + Eq + Hash + Send + Sync + 'static> ArcIntern<T> {
         T: BorrowOsStr + From<&'a OsStr>,
     {
         let m = Self::get_container();
-        if let Some(b) = m.get(val) {
+        if let Some(b) = m.get_mut(val) {
             let b = b.key();
             // First increment the count.  We are holding the write mutex here.
             // Has to be the write mutex to avoid a race
